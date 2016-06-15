@@ -1,15 +1,15 @@
 package com.thoughtworks.mingle.client;
 
-import org.apache.http.Header;
-import org.apache.http.HttpException;
-import org.apache.http.HttpRequest;
-import org.apache.http.HttpRequestInterceptor;
+import org.apache.http.*;
 import org.apache.http.message.BasicHeader;
 import org.apache.http.protocol.HttpContext;
+import org.apache.http.util.EntityUtils;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.xml.bind.DatatypeConverter;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -19,6 +19,7 @@ import java.time.format.DateTimeFormatter;
 public class MingleRequestSigningInterceptor implements HttpRequestInterceptor {
     private final String accessKey;
     private final String secretKey;
+    private static final String EMPTY_STRING = "";
 
     public MingleRequestSigningInterceptor(String accessKey, java.lang.String secretKey) {
         this.accessKey = accessKey;
@@ -26,7 +27,7 @@ public class MingleRequestSigningInterceptor implements HttpRequestInterceptor {
     }
 
     @Override
-    public void process(HttpRequest request, HttpContext httpContext) throws HttpException {
+    public void process(final HttpRequest request, final HttpContext httpContext) throws HttpException {
         String requestPathWithApiVersion;
         requestPathWithApiVersion = getRequestPath(request);
         String contentType = requestContentType(request);
@@ -39,16 +40,24 @@ public class MingleRequestSigningInterceptor implements HttpRequestInterceptor {
         }
     }
 
-    private String getRequestBody(HttpRequest request) {
-        return request.getRequestLine().getUri();
+    private String getRequestBody(final HttpRequest request) throws MingleRequestSigningException {
+        if(request instanceof HttpEntityEnclosingRequest){
+            try {
+                HttpEntityEnclosingRequest httpEntityEnclosingRequest = (HttpEntityEnclosingRequest) request;
+                return EntityUtils.toString(httpEntityEnclosingRequest.getEntity());
+            } catch (IOException e) {
+                throw new MingleRequestSigningException("Error reading request body!!");
+            }
+        }
+        return EMPTY_STRING;
     }
 
     private HttpException makeHttpException(String message) {
-        return new HttpException("com.thoughtworks.mingle.client.MingleRequestSigningException:" + message);
+        return new HttpException("MingleRequestSigningException:" + message);
     }
 
-    private String getRequestPath(HttpRequest request) {
-        return getRequestBody(request).toString().replaceAll("http[s]?://[^\\s,\\/\\?]+", "");
+    private String getRequestPath(HttpRequest request) throws HttpException {
+        return request.getRequestLine().getUri().toString().replaceAll("http[s]?://[^\\s,\\/\\?]+", "");
     }
 
     private String requestContentType(HttpRequest request) {
@@ -62,8 +71,8 @@ public class MingleRequestSigningInterceptor implements HttpRequestInterceptor {
         return contentTypeHeaders[0].getValue();
     }
 
-    private void sign(HttpRequest request, String requestPath, String contentToEncode, String contentType) throws NoSuchAlgorithmException, MingleRequestSigningException {
-        String contentMd5 = calculateMD5(contentToEncode);
+    private void sign(HttpRequest request, String requestPath, String content, String contentType) throws NoSuchAlgorithmException, MingleRequestSigningException, UnsupportedEncodingException {
+        String contentMd5 = calculateMD5(content);
         String formattedDate = getFormattedDate();
         String canonicalString = String.format("%s,%s,%s,%s", contentType, contentMd5, requestPath, formattedDate);
         String hmac = calculateHMAC(this.secretKey, canonicalString);
@@ -87,11 +96,11 @@ public class MingleRequestSigningInterceptor implements HttpRequestInterceptor {
         }
     }
 
-    private String calculateMD5(String contentToEncode) throws NoSuchAlgorithmException {
-        String result = "";
-        if (!contentToEncode.equals("")) {
+    private String calculateMD5(String content) throws NoSuchAlgorithmException {
+        String result = EMPTY_STRING;
+        if (!content.equals(EMPTY_STRING)) {
             MessageDigest digest = MessageDigest.getInstance("MD5");
-            digest.update(contentToEncode.getBytes());
+            digest.update(content.getBytes());
             result = new String(base64Encode(digest.digest()));
         }
         return result;
